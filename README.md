@@ -21,7 +21,7 @@ If you want to give MemeCoins to your viewers for channel points, but you can't 
    **coins** - the number of MemeCoins that you want to give out for receiving a reward on the channel\
    **streamerId** - ID of your MemeAlerts account\
    c. Add Reward Get Info and choose your reward\
-   `Add -> Twitch -> Rewards -> Get Reward Info`\n
+   `Add -> Twitch -> Rewards -> Get Reward Info`\
    d. Add Execute Code\
    `Add -> Core -> C# -> Execute C# Code`\
    You can get the code [here](https://github.com/wenjiro/AutoIssMemeCoins/blob/main/code.cs)
