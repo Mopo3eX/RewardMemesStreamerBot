@@ -28,10 +28,10 @@ If you want to give MemeCoins to your viewers for channel points, but you can't 
 7. Add References
     - System.Net.dll
     - System.dll
-    - Microsoft.CSarp.dll
-    - System.IndentifyModel.dll
-    - System.IndentifyModel.Selectors.dll
-    - System.IndentifyModel.Services.dll
+    - Microsoft.CSharp.dll
+    - System.IdentityModel.dll
+    - System.IdentityModel.Selectors.dll
+    - System.IdentityModel.Services.dll
 9. Compile
 10. **You Great!**
 
