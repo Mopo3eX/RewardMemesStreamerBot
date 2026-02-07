@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
-using System.Text;
-using System.Net;
 using System.IO;
+using System.Net;
+using System.Text;
 using Newtonsoft.Json;
 
 public class CPHInline
@@ -18,197 +18,187 @@ public class CPHInline
         public List<Supporter> data { get; set; }
     }
 
-private List<Supporter> GetAllSupporters(string authToken)
-{
-    List<Supporter> allSupporters = new List<Supporter>();
-    int limit = 1000;
-    int skip = 0;
-
-    while (true)
+    private Supporter GetSupporter(string authToken, string targetUsername)
     {
-        var requestPayload = new { limit = limit, skip = skip };
-        string payloadJson = JsonConvert.SerializeObject(requestPayload);
+        string lowerName = targetUsername.ToLowerInvariant();
+        string cacheKey = "supid_" + lowerName;
 
-        var request = (HttpWebRequest)WebRequest.Create("https://memealerts.com/api/supporters");
-        request.Method = "POST";
-        request.ContentType = "application/json";
-        request.Headers.Add("Authorization", authToken);
-
-        using (var writer = new StreamWriter(request.GetRequestStream()))
+        string cachedId = CPH.GetGlobalVar<string>(cacheKey);
+        if (!string.IsNullOrEmpty(cachedId))
         {
-            writer.Write(payloadJson);
+            CPH.LogInfo($"[cache hit] {targetUsername} → используем ID {cachedId}");
+            return new Supporter
+            {
+                supporterId = cachedId,
+                supporterName = targetUsername 
+            };
         }
 
-        string responseText;
-        using (var response = (HttpWebResponse)request.GetResponse())
-        using (var reader = new StreamReader(response.GetResponseStream()))
+        try
         {
-            responseText = reader.ReadToEnd();
+            var payload = new
+            {
+                limit = 1,
+                skip = 0,
+                query = targetUsername,
+                filters = new[] { 0 }
+            };
+
+            string payloadJson = JsonConvert.SerializeObject(payload);
+
+            var request = (HttpWebRequest)WebRequest.Create("https://memealerts.com/api/supporters");
+            request.Method = "POST";
+            request.ContentType = "application/json";
+            request.Headers.Add("Authorization", authToken);
+
+            using (var writer = new StreamWriter(request.GetRequestStream()))
+            {
+                writer.Write(payloadJson);
+            }
+
+            string responseText;
+            using (var response = (HttpWebResponse)request.GetResponse())
+            using (var reader = new StreamReader(response.GetResponseStream()))
+            {
+                responseText = reader.ReadToEnd();
+            }
+
+            var supporters = JsonConvert.DeserializeObject<SupportersResponse>(responseText);
+
+            if (supporters?.data != null && supporters.data.Count > 0)
+            {
+                var first = supporters.data[0];
+                if (string.Equals(first.supporterName?.Trim(), targetUsername.Trim(), StringComparison.OrdinalIgnoreCase))
+                {
+                    string id = first.supporterId;
+                    string name = first.supporterName.Trim();
+
+                    CPH.LogInfo($"Найден {name} (ID: {id}) → кэшируем");
+                    CPH.SetGlobalVar(cacheKey, id, true);
+
+                    return new Supporter
+                    {
+                        supporterId = id,
+                        supporterName = name
+                    };
+                }
+            }
+
+            CPH.LogWarn($"Поиск по '{targetUsername}' → ничего подходящего не найдено");
+            return null;
         }
-
-        SupportersResponse supporters = JsonConvert.DeserializeObject<SupportersResponse>(responseText);
-
-        if (supporters?.data == null || supporters.data.Count == 0)
+        catch (WebException wex)
         {
-            CPH.LogInfo($"skip={skip}: пусто → конец.");
-            break;
+            string err = wex.Message;
+            if (wex.Response != null)
+            {
+                using (var r = new StreamReader(wex.Response.GetResponseStream()))
+                    err = r.ReadToEnd();
+            }
+            CPH.LogError($"Ошибка поиска '{targetUsername}': {err}");
+            return null;
         }
-
-        CPH.LogInfo($"skip={skip}: получено {supporters.data.Count} записей");
-        allSupporters.AddRange(supporters.data);
-
-        if (supporters.data.Count < limit)
-            break; 
-
-        skip += limit;
+        catch (Exception ex)
+        {
+            CPH.LogError($"Критическая ошибка поиска '{targetUsername}': {ex.Message}");
+            return null;
+        }
     }
-
-    CPH.LogInfo($"Всего саппортёров: {allSupporters.Count}");
-    return allSupporters;
-}
-
-
 
     public bool Execute()
     {
-
-        string targetUsername = args.ContainsKey("rawInput") ? args["rawInput"].ToString().Trim() : null;
+        string targetUsername = args.ContainsKey("rawInput") ? args["rawInput"]?.ToString()?.Trim() : null;
         if (string.IsNullOrWhiteSpace(targetUsername))
         {
             CPH.SendMessage("❌ Вы не ввели ник для получения MemeCoins.");
             return true;
         }
 
-
-        string callerUsername = args.ContainsKey("userName") ? args["userName"].ToString().Trim() : null;
-
-
-        string rewardId = args.ContainsKey("rewardId") ? args["rewardId"].ToString() : null;
-        string redemptionId = args.ContainsKey("redemptionId") ? args["redemptionId"].ToString() : null;
+        string callerUsername = args.ContainsKey("userName") ? args["userName"]?.ToString()?.Trim() : null;
+        string rewardId = args.ContainsKey("rewardId") ? args["rewardId"]?.ToString() : null;
+        string redemptionId = args.ContainsKey("redemptionId") ? args["redemptionId"]?.ToString() : null;
 
         int coins = CPH.GetGlobalVar<int>("coins");
         string streamerId = CPH.GetGlobalVar<string>("streamerId");
+        string bearer = CPH.GetGlobalVar<string>("bearer") ?? "";
+        string authToken = string.IsNullOrEmpty(bearer) ? "" : "Bearer " + bearer;
 
-        string authToken = "Bearer " + CPH.GetGlobalVar<string>("bearer") ?? "";
-        bool bonusIssuedSuccessfully = false;
+        bool success = false;
 
         try
         {
+            var supporter = GetSupporter(authToken, targetUsername);
 
-            List<Supporter> allSupporters = GetAllSupporters(authToken);
-
-            string supporterId = null;
-            string supporterName = null;
-
-            foreach (var supporter in allSupporters)
-            {
-                if (string.Equals(supporter.supporterName.Trim(), targetUsername, StringComparison.OrdinalIgnoreCase))
-                {
-                    supporterId = supporter.supporterId;
-                    supporterName = supporter.supporterName.Trim();
-                    break;
-                }
-            }
-
-            string bonusRecipientName = supporterId != null ? supporterName : targetUsername;
-
-            if (supporterId == null)
+            if (supporter == null)
             {
                 CPH.SendMessage($"Пользователь с ником '{targetUsername}' не найден. Баллы возвращены.");
             }
-
-
-            if (supporterId != null)
+            else
             {
                 var bonusPayload = new
                 {
-                    userId = supporterId,
+                    userId = supporter.supporterId,
                     streamerId = streamerId,
                     value = coins
                 };
+
                 string bonusJson = JsonConvert.SerializeObject(bonusPayload);
 
-                var request = (HttpWebRequest)WebRequest.Create("https://memealerts.com/api/user/give-bonus");
-                request.Method = "POST";
-                request.ContentType = "application/json";
-                request.Headers.Add("Authorization", authToken);
-                request.Accept = "application/json";
-                request.UserAgent = "Mozilla/5.0";
+                var req = (HttpWebRequest)WebRequest.Create("https://memealerts.com/api/user/give-bonus");
+                req.Method = "POST";
+                req.ContentType = "application/json";
+                req.Headers.Add("Authorization", authToken);
+                req.Accept = "application/json";
+                req.UserAgent = "Mozilla/5.0";
 
-                using (var streamWriter = new StreamWriter(request.GetRequestStream()))
+                using (var writer = new StreamWriter(req.GetRequestStream()))
                 {
-                    streamWriter.Write(bonusJson);
-                    streamWriter.Flush();
+                    writer.Write(bonusJson);
                 }
 
-                try
+                using (var response = (HttpWebResponse)req.GetResponse())
+                using (var reader = new StreamReader(response.GetResponseStream()))
                 {
-                    using (var response = (HttpWebResponse)request.GetResponse())
-                    using (var reader = new StreamReader(response.GetResponseStream()))
-                    {
-                        string result = reader.ReadToEnd();
-                        CPH.SendMessage($"{bonusRecipientName} получил {coins} мемкоинов!");
-                        CPH.TwitchRedemptionFulfill(rewardId, redemptionId);
-                        bonusIssuedSuccessfully = true;
-                    }
+                    reader.ReadToEnd();
                 }
-                catch (WebException wex)
-                {
-                    bonusIssuedSuccessfully = false;
-                    string errorMessage = "";
-                    if (wex.Response != null)
-                    {
-                        using (var reader = new StreamReader(wex.Response.GetResponseStream()))
-                        {
-                            errorMessage = reader.ReadToEnd();
-                            CPH.LogError($"WebException при выдаче MemeCoins: {errorMessage}");
-                        }
-                    }
-                    else
-                    {
-                        errorMessage = wex.Message;
-                        CPH.LogError($"WebException при выдаче MemeCoins: {errorMessage}");
-                    }
-                    CPH.SendMessage($"❌ Не удалось выдать бонус {bonusRecipientName}. {errorMessage}");
-                }
+
+                CPH.SendMessage($"{supporter.supporterName} получил {coins} мемкоинов!");
+                CPH.TwitchRedemptionFulfill(rewardId, redemptionId);
+                success = true;
             }
-
-
-            CPH.LogInfo("=== Диагностика перед возвратом баллов ===");
-            CPH.LogInfo($"rewardId: {(rewardId ?? "null")}");
-            CPH.LogInfo($"redemptionId: {(redemptionId ?? "null")}");
-            CPH.LogInfo($"callerUsername: {(callerUsername ?? "null")}");
-            CPH.LogInfo($"bonusIssuedSuccessfully: {bonusIssuedSuccessfully}");
-
-
-            if (!bonusIssuedSuccessfully && !string.IsNullOrEmpty(rewardId) && !string.IsNullOrEmpty(redemptionId) && !string.IsNullOrEmpty(callerUsername))
+        }
+        catch (WebException wex)
+        {
+            string errMsg = wex.Message;
+            if (wex.Response != null)
             {
-                try
+                using (var reader = new StreamReader(wex.Response.GetResponseStream()))
                 {
-                    CPH.LogInfo("Попытка отменить редемпшен через Broadcaster Account...");
-                    bool canceled = CPH.TwitchRedemptionCancel(rewardId, redemptionId);
-
-                    if (canceled)
-                    {
-                        CPH.LogInfo($"Redemption {redemptionId} успешно отменён. Статус CANCELED.");
-                    }
-                    else
-                    {
-                        CPH.SendMessage($"Не удалось вернуть баллы Twitch для {callerUsername}.");
-                        CPH.LogWarn($"TwitchRedemptionCancel вернул false. rewardId={rewardId}, redemptionId={redemptionId}, user={callerUsername}");
-                    }
-                }
-                catch (Exception ex)
-                {
-                    CPH.SendMessage($"Ошибка при возврате баллов Twitch: {ex.Message}");
-                    CPH.LogError($"Ошибка при вызове TwitchRedemptionCancel: {ex}");
+                    errMsg = reader.ReadToEnd();
                 }
             }
+            CPH.LogError($"Ошибка выдачи: {errMsg}");
+            CPH.SendMessage($"❌ Не удалось выдать бонус. {errMsg}");
         }
         catch (Exception ex)
         {
-            CPH.SendMessage($"Исключение: {ex.Message}");
-            CPH.LogError($"Общее исключение: {ex}");
+            CPH.LogError($"Общая ошибка: {ex}");
+            CPH.SendMessage($"❌ Ошибка: {ex.Message}");
+        }
+        finally
+        {
+            if (!success && !string.IsNullOrEmpty(rewardId) && !string.IsNullOrEmpty(redemptionId) && !string.IsNullOrEmpty(callerUsername))
+            {
+                try
+                {
+                    bool canceled = CPH.TwitchRedemptionCancel(rewardId, redemptionId);
+                    CPH.LogInfo(canceled ? $"Заявка {redemptionId} отмена" : $"Не удалось отменить заявку");
+                }
+                catch (Exception ex)
+                {
+                    CPH.LogError($"Ошибка отмены: {ex}");
+                }
+            }
         }
 
         return true;
