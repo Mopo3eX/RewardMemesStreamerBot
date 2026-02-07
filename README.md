@@ -26,12 +26,8 @@ If you want to give MemeCoins to your viewers for channel points, but you can't 
    `Add -> Core -> C# -> Execute C# Code`\
    You can get the code [here](https://github.com/wenjiro/AutoIssMemeCoins/blob/main/code.cs)
 7. Add References
-    - System.Net.dll
+    - mscorlib.dll
     - System.dll
-    - Microsoft.CSharp.dll
-    - System.IdentityModel.dll
-    - System.IdentityModel.Selectors.dll
-    - System.IdentityModel.Services.dll
 9. Compile
 10. **You Great!**
 
