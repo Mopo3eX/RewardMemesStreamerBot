@@ -17,6 +17,62 @@ public class CPHInline
     {
         public List<Supporter> data { get; set; }
     }
+	public class Current
+	{
+        public string id { get; set; }
+    }
+
+	private string GetStreamerId(string authToken)
+    {
+        string streamerId = CPH.GetGlobalVar<string>("streamerId");
+        if (!string.IsNullOrEmpty(streamerId))
+        {
+            return streamerId;
+        }
+
+        try
+        {
+            var request = (HttpWebRequest)WebRequest.Create("https://memealerts.com/api/user/current");
+            request.Method = "GET";
+            request.ContentType = "application/json";
+            request.Headers.Add("Authorization", authToken);
+
+            string responseText;
+            using (var response = (HttpWebResponse)request.GetResponse())
+            using (var reader = new StreamReader(response.GetResponseStream()))
+            {
+                responseText = reader.ReadToEnd();
+            }
+
+            var current = JsonConvert.DeserializeObject<Current>(responseText);
+            if(current?.id != null)
+            {
+            	string id = current?.id;
+            	CPH.LogInfo($"Получен StreamerID (ID: {id}) → кэшируем");
+            	CPH.SetGlobalVar("streamerId", id, true);
+            	return id;
+            }
+
+            CPH.LogWarn($"Не удалось получить StreamerId. Возможно неисправен Bearer.");
+            return null;
+        }
+        catch (WebException wex)
+        {
+            string err = wex.Message;
+            if (wex.Response != null)
+            {
+                using (var r = new StreamReader(wex.Response.GetResponseStream()))
+                    err = r.ReadToEnd();
+            }
+            CPH.LogError($"Ошибка получения StreamerId: {err}");
+            return null;
+        }
+        catch (Exception ex)
+        {
+            CPH.LogError($"Критическая ошибка получения StreamerId: {ex.Message}");
+            return null;
+        }
+    }
 
     private Supporter GetSupporter(string authToken, string targetUsername)
     {
@@ -118,10 +174,10 @@ public class CPHInline
         string rewardId = args.ContainsKey("rewardId") ? args["rewardId"]?.ToString() : null;
         string redemptionId = args.ContainsKey("redemptionId") ? args["redemptionId"]?.ToString() : null;
 
-        int coins = CPH.GetGlobalVar<int>("coins");
-        string streamerId = CPH.GetGlobalVar<string>("streamerId");
+        int coins = int.Parse(args["coins"]?.ToString());
         string bearer = CPH.GetGlobalVar<string>("bearer") ?? "";
         string authToken = string.IsNullOrEmpty(bearer) ? "" : "Bearer " + bearer;
+        string streamerId = GetStreamerId(authToken);
 
         bool success = false;
 
@@ -131,7 +187,7 @@ public class CPHInline
 
             if (supporter == null)
             {
-                CPH.SendMessage($"Пользователь с ником '{targetUsername}' не найден. Баллы возвращены.");
+                CPH.SendMessage($"Пользователь с ником '{targetUsername}' не найден. Возможно вам необходимо для начала получить Бонус на MemeAlerts. Баллы возвращенны.");
             }
             else
             {
@@ -162,7 +218,7 @@ public class CPHInline
                     reader.ReadToEnd();
                 }
 
-                CPH.SendMessage($"{supporter.supporterName} получил {coins} мемкоинов!");
+                CPH.SendMessage($"{supporter.supporterName} получил {coins} MemeCoins!");
                 CPH.TwitchRedemptionFulfill(rewardId, redemptionId);
                 success = true;
             }
